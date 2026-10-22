@@ -15,9 +15,8 @@ containers:
       DYNAMODB_TABLE: ${resources.events.tableName}
       S3_BUCKET: ${resources.files.bucket}
     readinessProbe:
-      httpGet:
-        path: /relay/healthz
-        port: 8080
+      path: /relay/healthz
+      port: 8080
 service:
   ports:
     http:

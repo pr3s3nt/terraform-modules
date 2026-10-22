@@ -10,9 +10,8 @@ containers:
       BACKEND_URL: ${resources.internal.url}
       PUBLIC_URL: ${resources.public.url}
     readinessProbe:
-      httpGet:
-        path: /healthz
-        port: 8080
+      path: /healthz
+      port: 8080
 service:
   ports:
     http:

@@ -11,9 +11,8 @@ containers:
       DB_USERNAME: ${resources.db.username}
       DB_PASSWORD: ${resources.db.password}
     readinessProbe:
-      httpGet:
-        path: /cmn/healthz
-        port: 8080
+      path: /cmn/healthz
+      port: 8080
 service:
   ports:
     http:
