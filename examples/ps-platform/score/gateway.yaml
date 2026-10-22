@@ -1,0 +1,32 @@
+# Internal Gateway [4]: receives mobile traffic from the public ALB (WAF,
+# Route 53) and forwards it to the internal ALB [5].
+apiVersion: score.dev/v1b1
+metadata:
+  name: gateway
+containers:
+  main:
+    image: REGISTRY/ps/gateway:1.0.0
+    variables:
+      BACKEND_URL: ${resources.internal.url}
+      PUBLIC_URL: ${resources.public.url}
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 8080
+service:
+  ports:
+    http:
+      port: 8080
+      targetPort: 8080
+resources:
+  # Public ALB + AWS WAF (+ Route 53 record and ACM certificate when the
+  # Platform Engineer configured a hosted zone in the Definition).
+  public:
+    type: public-endpoint
+    params:
+      port: 8080
+      health_path: /healthz
+  # The shared internal ALB; auth/cmn/relay attach path routes to it.
+  internal:
+    type: internal-alb
+    id: internal-alb

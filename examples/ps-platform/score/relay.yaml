@@ -1,0 +1,48 @@
+# Relay service: internal ALB path /relay/*; Aurora MySQL, DynamoDB through
+# the VPC endpoint, private S3 for mobile upload/download (presigned URLs) and
+# push notifications to Firebase / WNS through the NAT Gateway.
+apiVersion: score.dev/v1b1
+metadata:
+  name: relay
+containers:
+  main:
+    image: REGISTRY/ps/relay:1.0.0
+    variables:
+      DB_URL: ${resources.db.jdbcUrl}
+      DB_USERNAME: ${resources.db.username}
+      DB_PASSWORD: ${resources.db.password}
+      AWS_REGION: ${resources.events.region}
+      DYNAMODB_TABLE: ${resources.events.tableName}
+      S3_BUCKET: ${resources.files.bucket}
+    readinessProbe:
+      httpGet:
+        path: /relay/healthz
+        port: 8080
+service:
+  ports:
+    http:
+      port: 8080
+      targetPort: 8080
+resources:
+  route:
+    type: internal-route
+    params:
+      port: 8080
+      path: /relay/*
+      health_path: /relay/healthz
+  db:
+    type: mysql
+    id: ps-aurora
+    params:
+      database: ps
+      username: psapp
+  events:
+    type: dynamodb-table
+    params:
+      hash_key: pk
+      range_key: sk
+      ttl_attribute: expiresAt
+  files:
+    type: s3-bucket
+    params:
+      cors_origins: []

@@ -1,0 +1,227 @@
+{
+  "_comment": "Resource Types and Resource Definitions for the PS architecture (public ALB + WAF + Route 53 -> gateway -> internal ALB -> auth/cmn/relay on EKS, Aurora MySQL, DynamoDB, private S3, NAT egress, CloudWatch dashboards). register.sh fills the verified module pin (source), the AWS Driver Account and region, and replaces @EGRESS_CIDR@. Keys starting with _ are ignored.",
+  "types": [
+    {"key": "workload", "inputs": [], "outputs": []},
+    {"key": "k8s-cluster", "inputs": [], "outputs": [
+      {"name": "name", "type": "string"},
+      {"name": "cluster", "type": "any", "required": true}
+    ]},
+    {"key": "k8s-namespace", "inputs": [], "outputs": [
+      {"name": "name", "type": "string", "required": true}
+    ]},
+    {"key": "vpc", "inputs": [], "outputs": [
+      {"name": "id", "type": "string", "required": true},
+      {"name": "cidr", "type": "string"},
+      {"name": "subnetIds", "type": "any"},
+      {"name": "privateSubnetIds", "type": "any"},
+      {"name": "publicSubnetIds", "type": "any"}
+    ]},
+    {"key": "mysql", "inputs": [
+      {"name": "database", "type": "string", "required": true},
+      {"name": "username", "type": "string", "required": true}
+    ], "outputs": [
+      {"name": "host", "type": "string", "required": true},
+      {"name": "readerHost", "type": "string"},
+      {"name": "port", "type": "number", "required": true},
+      {"name": "database", "type": "string", "required": true},
+      {"name": "username", "type": "string", "required": true},
+      {"name": "password", "type": "string", "required": true, "secret": true},
+      {"name": "jdbcUrl", "type": "string", "required": true},
+      {"name": "clusterIdentifier", "type": "string"}
+    ]},
+    {"key": "workload-identity", "inputs": [], "outputs": [
+      {"name": "roleArn", "type": "string", "required": true},
+      {"name": "roleName", "type": "string", "required": true},
+      {"name": "metricNamespace", "type": "string"}
+    ]},
+    {"key": "dynamodb-table", "inputs": [
+      {"name": "hash_key", "type": "string", "required": true},
+      {"name": "range_key", "type": "string"},
+      {"name": "ttl_attribute", "type": "string"}
+    ], "outputs": [
+      {"name": "tableName", "type": "string", "required": true},
+      {"name": "tableArn", "type": "string", "required": true},
+      {"name": "region", "type": "string", "required": true}
+    ]},
+    {"key": "s3-bucket", "inputs": [
+      {"name": "cors_origins", "type": "any"}
+    ], "outputs": [
+      {"name": "bucket", "type": "string", "required": true},
+      {"name": "bucketArn", "type": "string", "required": true},
+      {"name": "regionalDomainName", "type": "string"},
+      {"name": "region", "type": "string", "required": true}
+    ]},
+    {"key": "public-endpoint", "inputs": [
+      {"name": "port", "type": "number", "required": true},
+      {"name": "health_path", "type": "string"}
+    ], "outputs": [
+      {"name": "url", "type": "string", "required": true},
+      {"name": "hostname", "type": "string", "required": true},
+      {"name": "dnsName", "type": "string"},
+      {"name": "arnSuffix", "type": "string"}
+    ]},
+    {"key": "internal-alb", "inputs": [], "outputs": [
+      {"name": "url", "type": "string", "required": true},
+      {"name": "dnsName", "type": "string"},
+      {"name": "listenerArn", "type": "string", "required": true},
+      {"name": "securityGroupId", "type": "string", "required": true},
+      {"name": "arnSuffix", "type": "string"}
+    ]},
+    {"key": "internal-route", "inputs": [
+      {"name": "port", "type": "number", "required": true},
+      {"name": "path", "type": "string", "required": true},
+      {"name": "priority", "type": "number"},
+      {"name": "health_path", "type": "string"}
+    ], "outputs": [
+      {"name": "url", "type": "string", "required": true},
+      {"name": "targetGroupArn", "type": "string"}
+    ]}
+  ],
+  "definitions": [
+    {
+      "key": "ps-vpc", "name": "PS VPC (public/app/db subnets, NAT, endpoints)", "resourceType": "vpc",
+      "driverType": "terraform", "module": "modules/vpc-nat", "aws": true,
+      "variables": {
+        "name": "${context.infra.resourceName}",
+        "cidr": "10.60.0.0/16",
+        "availability_zones": ["@REGION@a", "@REGION@c"],
+        "single_nat_gateway": true
+      },
+      "inputs": [],
+      "outputs": {"id": "id", "cidr": "cidr", "subnetIds": "subnetIds", "privateSubnetIds": "privateSubnetIds", "publicSubnetIds": "publicSubnetIds"},
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-eks", "name": "PS EKS cluster", "resourceType": "k8s-cluster",
+      "driverType": "terraform", "module": "modules/eks", "aws": true,
+      "variables": {
+        "name": "${context.infra.resourceName}",
+        "subnet_ids": "${resources['vpc.default#environments.@app.@env'].outputs.subnetIds}",
+        "kubernetes_version": "1.35",
+        "node_instance_type": "t3.large",
+        "node_capacity_type": "ON_DEMAND",
+        "node_ami_type": "AL2023_x86_64_STANDARD",
+        "node_disk_size": 50,
+        "ebs_csi_driver": true,
+        "public_access_cidrs": ["@EGRESS_CIDR@"]
+      },
+      "inputs": [],
+      "outputs": {"name": "name"},
+      "criteria": [{"class": "eks"}]
+    },
+    {
+      "key": "ps-namespace", "name": "PS namespace on EKS", "resourceType": "k8s-namespace",
+      "driverType": "terraform", "module": "modules/k8s-namespace", "kubernetes": true,
+      "variables": {"name": "${context.env.namespace}"},
+      "inputs": [],
+      "outputs": {"name": "name"},
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-workload", "name": "PS workload (score-k8s on EKS)", "resourceType": "workload",
+      "driverType": "score-k8s",
+      "variables": {
+        "render_bundle": "@RENDER_BUNDLE@",
+        "namespace": "${resources['k8s-namespace.default#environments.@app.@env'].outputs.name}",
+        "cluster": "${resources['k8s-cluster.eks#environments.@app.@env'].outputs.cluster}"
+      },
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-aurora-mysql", "name": "PS Aurora MySQL (port 43306)", "resourceType": "mysql",
+      "driverType": "terraform", "module": "modules/aurora-mysql", "aws": true,
+      "variables": {
+        "name": "${context.infra.resourceName}",
+        "vpc_id": "${resources['vpc.default#environments.@app.@env'].outputs.id}",
+        "private_subnet_ids": "${resources['vpc.default#environments.@app.@env'].outputs.privateSubnetIds}",
+        "client_subnet_ids": "${resources['vpc.default#environments.@app.@env'].outputs.subnetIds}",
+        "engine_version": "8.0.mysql_aurora.3.08.2",
+        "port": 43306,
+        "min_capacity": 0,
+        "max_capacity": 2,
+        "allow_destroy": true
+      },
+      "inputs": ["database", "username"],
+      "outputs": {"host": "host", "reader_host": "readerHost", "port": "port", "database": "database", "username": "username", "password": "password", "jdbc_url": "jdbcUrl", "cluster_identifier": "clusterIdentifier"},
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-workload-identity", "name": "PS application IAM role (EKS Pod Identity)", "resourceType": "workload-identity",
+      "driverType": "terraform", "module": "modules/workload-identity", "aws": true,
+      "variables": {
+        "cluster_name": "${resources['k8s-cluster.eks#environments.@app.@env'].outputs.name}",
+        "namespace": "${resources['k8s-namespace.default#environments.@app.@env'].outputs.name}",
+        "metric_namespace": "PS"
+      },
+      "inputs": [],
+      "outputs": {"role_arn": "roleArn", "role_name": "roleName", "metric_namespace": "metricNamespace"},
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-dynamodb", "name": "PS DynamoDB table", "resourceType": "dynamodb-table",
+      "driverType": "terraform", "module": "modules/dynamodb-table", "aws": true,
+      "variables": {
+        "role_name": "${resources['workload-identity.default#environments.@app.@env'].outputs.roleName}",
+        "allow_destroy": true
+      },
+      "inputs": ["hash_key", "range_key", "ttl_attribute"],
+      "outputs": {"table_name": "tableName", "table_arn": "tableArn", "region": "region"},
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-s3", "name": "PS private S3 bucket", "resourceType": "s3-bucket",
+      "driverType": "terraform", "module": "modules/s3-bucket", "aws": true,
+      "variables": {
+        "role_name": "${resources['workload-identity.default#environments.@app.@env'].outputs.roleName}",
+        "allow_destroy": true
+      },
+      "inputs": ["cors_origins"],
+      "outputs": {"bucket": "bucket", "bucket_arn": "bucketArn", "regional_domain_name": "regionalDomainName", "region": "region"},
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-public-endpoint", "name": "PS public ALB + WAF (+ Route 53/ACM)", "resourceType": "public-endpoint",
+      "driverType": "terraform", "module": "modules/public-alb", "aws": true, "kubernetes": true,
+      "variables": {
+        "vpc_id": "${resources['vpc.default#environments.@app.@env'].outputs.id}",
+        "public_subnet_ids": "${resources['vpc.default#environments.@app.@env'].outputs.publicSubnetIds}",
+        "cluster_name": "${resources['k8s-cluster.eks#environments.@app.@env'].outputs.name}",
+        "namespace": "${resources['k8s-namespace.default#environments.@app.@env'].outputs.name}",
+        "res_id": "${context.res.id}",
+        "hosted_zone_id": "@HOSTED_ZONE_ID@",
+        "domain_name": "@DOMAIN_NAME@",
+        "allow_destroy": true
+      },
+      "inputs": ["port", "health_path"],
+      "outputs": {"url": "url", "hostname": "hostname", "dns_name": "dnsName", "arn_suffix": "arnSuffix"},
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-internal-alb", "name": "PS internal ALB", "resourceType": "internal-alb",
+      "driverType": "terraform", "module": "modules/internal-alb", "aws": true,
+      "variables": {
+        "vpc_id": "${resources['vpc.default#environments.@app.@env'].outputs.id}",
+        "subnet_ids": "${resources['vpc.default#environments.@app.@env'].outputs.subnetIds}"
+      },
+      "inputs": [],
+      "outputs": {"url": "url", "dns_name": "dnsName", "listener_arn": "listenerArn", "security_group_id": "securityGroupId", "arn_suffix": "arnSuffix"},
+      "criteria": [{}]
+    },
+    {
+      "key": "ps-internal-route", "name": "PS internal ALB path route", "resourceType": "internal-route",
+      "driverType": "terraform", "module": "modules/internal-route", "aws": true, "kubernetes": true,
+      "variables": {
+        "vpc_id": "${resources['vpc.default#environments.@app.@env'].outputs.id}",
+        "cluster_name": "${resources['k8s-cluster.eks#environments.@app.@env'].outputs.name}",
+        "namespace": "${resources['k8s-namespace.default#environments.@app.@env'].outputs.name}",
+        "listener_arn": "${resources['internal-alb.default#shared.internal-alb'].outputs.listenerArn}",
+        "alb_security_group_id": "${resources['internal-alb.default#shared.internal-alb'].outputs.securityGroupId}",
+        "alb_url": "${resources['internal-alb.default#shared.internal-alb'].outputs.url}",
+        "res_id": "${context.res.id}"
+      },
+      "inputs": ["port", "path", "priority", "health_path"],
+      "outputs": {"url": "url", "target_group_arn": "targetGroupArn"},
+      "criteria": [{}]
+    }
+  ]
+}

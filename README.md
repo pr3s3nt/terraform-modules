@@ -10,7 +10,7 @@ Select a Resource Type, then use the default **Thêm từ Git** source:
 
 - Git HTTPS URL: `https://github.com/pr3s3nt/terraform-modules.git`
 - Module directory: choose a path from the table below.
-- Tag or commit: `v1.0.0` (inspection resolves it to a full immutable commit).
+- Tag or commit: `v1.1.0` (or `v1.0.0` for the original seven modules); inspection resolves it to a full immutable commit.
 
 Click **Kiểm tra module**, configure mappings/inputs and provider bindings, then
 save the Definition. Inspecting or saving a Definition does not deploy resources.
@@ -25,6 +25,19 @@ The platform computes the content digest; do not enter it by hand.
 | `modules/k8s-namespace` | `k8s-namespace` | Kubernetes |
 | `modules/redis-k8s` | `redis` | Kubernetes |
 | `modules/postgres-k8s` | `postgres` | Kubernetes |
+| `modules/vpc-nat` | `vpc` | AWS |
+| `modules/aurora-mysql` | `mysql` | AWS |
+| `modules/workload-identity` | `workload-identity` | AWS |
+| `modules/dynamodb-table` | `dynamodb-table` | AWS |
+| `modules/s3-bucket` | `s3-bucket` | AWS |
+| `modules/internal-alb` | `internal-alb` | AWS |
+| `modules/public-alb` | `public-endpoint` | AWS + Kubernetes |
+| `modules/internal-route` | `internal-route` | AWS + Kubernetes |
+
+Modules from `vpc-nat` down were added in `v1.1.0` for the PS architecture;
+see [examples/ps-platform](examples/ps-platform/README.md) for the Resource
+Types, Definitions and developer Score files that use them. The `v1.0.0`
+modules are unchanged.
 
 These modules use the Orchestrator executor contract for credentials, generated
 secrets, ownership and resource lifecycle. AWS definitions select a ready Driver

@@ -1,0 +1,35 @@
+# auth service: reached through the internal ALB path /auth/*; uses the
+# shared Aurora MySQL cluster (JDBC, port 43306).
+apiVersion: score.dev/v1b1
+metadata:
+  name: auth
+containers:
+  main:
+    image: REGISTRY/ps/auth:1.0.0
+    variables:
+      DB_URL: ${resources.db.jdbcUrl}
+      DB_USERNAME: ${resources.db.username}
+      DB_PASSWORD: ${resources.db.password}
+    readinessProbe:
+      httpGet:
+        path: /auth/healthz
+        port: 8080
+service:
+  ports:
+    http:
+      port: 8080
+      targetPort: 8080
+resources:
+  route:
+    type: internal-route
+    params:
+      port: 8080
+      path: /auth/*
+      health_path: /auth/healthz
+  # Same id and params in every workload: one shared Aurora cluster.
+  db:
+    type: mysql
+    id: ps-aurora
+    params:
+      database: ps
+      username: psapp
